@@ -3,15 +3,16 @@ import time
 import os
 import math
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
 from threading import Thread
 from queue import Queue
+import json
 
 load_dotenv()
 
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-CLIENT_NAME = os.getenv("CLIENT_NAME")
+CLIENT_ID = os.getenv("CLIENT_ID")
 
 MODEL_PATH = os.getenv("MODEL_PATH")
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", 0.6))
@@ -42,6 +43,7 @@ os.makedirs(FRAME_FOLDER, exist_ok=True)
 
 print("=== APP STARTED ===", flush=True)
 print("CHANNEL_ID:", CHANNEL_ID, flush=True)
+print("CLIENT_ID:", CLIENT_ID, flush=True)
 print("RTSP_URL:", RTSP_URL, flush=True)
 
 # ==============================
@@ -64,28 +66,34 @@ def webhook_worker():
                     "timestamp": ts_iso,
                     "bbox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
                     "channel_id": CHANNEL_ID,
-                    "client_name": CLIENT_NAME
+                    "client_id": CLIENT_ID
+                }
+
+                log_payload = {
+                    "url": WEBHOOK_URL,
+                    "face_file": os.path.basename(face_path),
+                    "frame_file": os.path.basename(frame_path),
+                    "data": data_payload
                 }
 
                 print("\n=== WEBHOOK SEND ===")
-                print("URL:", WEBHOOK_URL)
-                print("Face file:", os.path.basename(face_path))
-                print("Frame file:", os.path.basename(frame_path))
-                print("Data:", data_payload)
+                print(json.dumps(log_payload, indent=4))
                 print("====================\n")
 
-                response = requests.post(
-                    WEBHOOK_URL,
-                    files=[
-                        ("face_file", (os.path.basename(face_path), f1, "image/jpeg")),
-                        ("frame_file", (os.path.basename(frame_path), f2, "image/jpeg")),
-                    ],
-                    data=data_payload,
-                    timeout=WEBHOOK_TIMEOUT
-                )
+                try:
+                    response = requests.post(
+                        WEBHOOK_URL,
+                        files=[
+                            ("files", (os.path.basename(face_path), f1, "image/jpeg")),
+                            ("files", (os.path.basename(frame_path), f2, "image/jpeg")),
+                        ],
+                        data=data_payload,
+                        timeout=WEBHOOK_TIMEOUT
+                    )
 
-                print("Status:", response.status_code)
-                print("Response:", response.text)
+                    print("Status:", response.status_code)
+                except Exception as e:
+                    print("Request error:", e)
 
         except Exception as e:
             print("Webhook error:", e)
@@ -105,8 +113,7 @@ def enforce_limit(folder):
         os.remove(f)
 
 def iso_name(prefix):
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    ts = ts.replace("+00:00", "Z").replace(":", "-")
+    ts = datetime.now().replace(microsecond=0).strftime("%Y-%m-%dT%H-%M-%S")
     return f"{prefix}_{ts}.jpg"
 
 def center(box):

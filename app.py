@@ -3,7 +3,7 @@ import time
 import os
 import math
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from threading import Thread
 from queue import Queue
@@ -188,14 +188,51 @@ while True:
     _, faces = detector.detect(resized)
 
     boxes = []
-    if faces is not None:
-        for face in faces:
-            x, y, fw, fh = face[:4].astype(int)
-            x = int(x * sx)
-            y = int(y * sy)
-            fw = int(fw * sx)
-            fh = int(fh * sy)
-            boxes.append((x,y,fw,fh))
+    if faces is not None and len(faces) > 0:
+
+        # =========================
+        # AMBIL WAJAH TERBESAR
+        # =========================
+        largest_face = max(faces, key=lambda f: f[2] * f[3])
+
+        x, y, fw, fh = largest_face[:4].astype(int)
+
+        # scale ke ukuran original
+        x = int(x * sx)
+        y = int(y * sy)
+        fw = int(fw * sx)
+        fh = int(fh * sy)
+
+        # =========================
+        # TAMBAH MARGIN
+        # =========================
+        margin = 0.30          # 30% kanan kiri bawah
+        extra_top = 0.40       # 40% tambahan ke atas (rambut)
+
+        pad_w = int(fw * margin)
+        pad_h = int(fh * margin)
+        extra_h = int(fh * extra_top)
+
+        x_new = x - pad_w
+        y_new = y - pad_h - extra_h
+        fw_new = fw + (2 * pad_w)
+        fh_new = fh + (2 * pad_h) + extra_h
+
+        # =========================
+        # CLAMP AGAR TIDAK KELUAR FRAME
+        # =========================
+        h_img, w_img = original.shape[:2]
+
+        x_new = max(0, x_new)
+        y_new = max(0, y_new)
+
+        if x_new + fw_new > w_img:
+            fw_new = w_img - x_new
+
+        if y_new + fh_new > h_img:
+            fh_new = h_img - y_new
+
+        boxes.append((x_new, y_new, fw_new, fh_new))
 
     # === FRAME UNTUK DISIMPAN (SELALU DIGAMBAR) ===
     frame_with_box = original.copy()
