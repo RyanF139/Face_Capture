@@ -11,7 +11,7 @@ from queue import Queue
 load_dotenv()
 
 CHANNEL_ID = os.getenv("CHANNEL_ID")
-CLIENT_NAME = os.getenv("CLIENT_NAME")
+CLIENT_ID = os.getenv("CLIENT_ID")
 
 MODEL_PATH = os.getenv("MODEL_PATH")
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", 0.6))
@@ -64,7 +64,7 @@ def webhook_worker():
                     "timestamp": ts_iso,
                     "bbox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
                     "channel_id": CHANNEL_ID,
-                    "client_name": CLIENT_NAME
+                    "client_id": CLIENT_ID
                 }
 
                 print("\n=== WEBHOOK SEND ===")
@@ -73,19 +73,20 @@ def webhook_worker():
                 print("Frame file:", os.path.basename(frame_path))
                 print("Data:", data_payload)
                 print("====================\n")
+                try:
+                    response = requests.post(
+                        WEBHOOK_URL,
+                        files=[
+                            ("files", (os.path.basename(face_path), f1, "image/jpeg")),
+                            ("files", (os.path.basename(frame_path), f2, "image/jpeg")),
+                        ],
+                        data=data_payload,
+                        timeout=WEBHOOK_TIMEOUT
+                    )
 
-                response = requests.post(
-                    WEBHOOK_URL,
-                    files=[
-                        ("face_file", (os.path.basename(face_path), f1, "image/jpeg")),
-                        ("frame_file", (os.path.basename(frame_path), f2, "image/jpeg")),
-                    ],
-                    data=data_payload,
-                    timeout=WEBHOOK_TIMEOUT
-                )
-
-                print("Status:", response.status_code)
-                print("Response:", response.text)
+                    print("Status:", response.status_code)
+                except Exception as e:
+                    print("Request error:", e)
 
         except Exception as e:
             print("Webhook error:", e)
