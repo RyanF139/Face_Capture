@@ -10,6 +10,9 @@ from queue import Queue
 
 load_dotenv()
 
+CHANNEL_ID = os.getenv("CHANNEL_ID")
+CLIENT_NAME = os.getenv("CLIENT_NAME")
+
 MODEL_PATH = os.getenv("MODEL_PATH")
 SCORE_THRESHOLD = float(os.getenv("SCORE_THRESHOLD", 0.6))
 
@@ -37,6 +40,10 @@ FRAME_FOLDER = os.path.join(SAVE_FOLDER, "frame")
 os.makedirs(FACE_FOLDER, exist_ok=True)
 os.makedirs(FRAME_FOLDER, exist_ok=True)
 
+print("=== APP STARTED ===", flush=True)
+print("CHANNEL_ID:", CHANNEL_ID, flush=True)
+print("RTSP_URL:", RTSP_URL, flush=True)
+
 # ==============================
 # WEBHOOK ASYNC
 # ==============================
@@ -47,27 +54,45 @@ def webhook_worker():
         item = queue.get()
         if item is None:
             break
+
         face_path, frame_path, ts_iso, bbox = item
+
         try:
             with open(face_path, "rb") as f1, open(frame_path, "rb") as f2:
-                requests.post(
+
+                data_payload = {
+                    "timestamp": ts_iso,
+                    "bbox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+                    "channel_id": CHANNEL_ID,
+                    "client_name": CLIENT_NAME
+                }
+
+                print("\n=== WEBHOOK SEND ===")
+                print("URL:", WEBHOOK_URL)
+                print("Face file:", os.path.basename(face_path))
+                print("Frame file:", os.path.basename(frame_path))
+                print("Data:", data_payload)
+                print("====================\n")
+
+                response = requests.post(
                     WEBHOOK_URL,
                     files=[
                         ("face_file", (os.path.basename(face_path), f1, "image/jpeg")),
                         ("frame_file", (os.path.basename(frame_path), f2, "image/jpeg")),
                     ],
-                    data={
-                        "timestamp": ts_iso,
-                        "bbox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}"
-                    },
+                    data=data_payload,
                     timeout=WEBHOOK_TIMEOUT
                 )
+
+                print("Status:", response.status_code)
+                print("Response:", response.text)
+
         except Exception as e:
             print("Webhook error:", e)
+
         queue.task_done()
 
 Thread(target=webhook_worker, daemon=True).start()
-
 # ==============================
 # HELPERS
 # ==============================
