@@ -40,6 +40,10 @@ FRAME_FOLDER = os.path.join(SAVE_FOLDER, "frame")
 os.makedirs(FACE_FOLDER, exist_ok=True)
 os.makedirs(FRAME_FOLDER, exist_ok=True)
 
+print("=== APP STARTED ===", flush=True)
+print("CHANNEL_ID:", CHANNEL_ID, flush=True)
+print("RTSP_URL:", RTSP_URL, flush=True)
+
 # ==============================
 # WEBHOOK ASYNC
 # ==============================
