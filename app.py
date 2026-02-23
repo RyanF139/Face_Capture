@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from dotenv import load_dotenv
 from threading import Thread
 from queue import Queue
+import json
 
 load_dotenv()
 
@@ -42,6 +43,7 @@ os.makedirs(FRAME_FOLDER, exist_ok=True)
 
 print("=== APP STARTED ===", flush=True)
 print("CHANNEL_ID:", CHANNEL_ID, flush=True)
+print("CLIENT_ID:", CLIENT_ID, flush=True)
 print("RTSP_URL:", RTSP_URL, flush=True)
 
 # ==============================
@@ -67,12 +69,17 @@ def webhook_worker():
                     "client_id": CLIENT_ID
                 }
 
+                log_payload = {
+                    "url": WEBHOOK_URL,
+                    "face_file": os.path.basename(face_path),
+                    "frame_file": os.path.basename(frame_path),
+                    "data": data_payload
+                }
+
                 print("\n=== WEBHOOK SEND ===")
-                print("URL:", WEBHOOK_URL)
-                print("Face file:", os.path.basename(face_path))
-                print("Frame file:", os.path.basename(frame_path))
-                print("Data:", data_payload)
+                print(json.dumps(log_payload, indent=4))
                 print("====================\n")
+
                 try:
                     response = requests.post(
                         WEBHOOK_URL,
