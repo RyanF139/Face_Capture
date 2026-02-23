@@ -3,7 +3,7 @@ import time
 import os
 import math
 import requests
-from datetime import datetime, timezone
+from datetime import datetime
 from dotenv import load_dotenv
 from threading import Thread
 from queue import Queue
@@ -113,8 +113,7 @@ def enforce_limit(folder):
         os.remove(f)
 
 def iso_name(prefix):
-    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-    ts = ts.replace("+00:00", "Z").replace(":", "-")
+    ts = datetime.now().replace(microsecond=0).strftime("%Y-%m-%dT%H-%M-%S")
     return f"{prefix}_{ts}.jpg"
 
 def center(box):
