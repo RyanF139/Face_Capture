@@ -155,6 +155,7 @@ class CameraWorker:
         self.face_last_time = {}
         self.face_memory_timeout = SAVE_INTERVAL
         self.last_global_save = 0
+        self.running = True
 
         print(f"[CAMERA START] {cctv_id}")
 
@@ -168,8 +169,13 @@ class CameraWorker:
             top_k=5000
         )
 
-    def can_save(self, box):
+    def stop(self):
+        print(f"[CAMERA STOP] {self.cctv_id}")
+        self.running = False
+        if self.cap:
+            self.cap.release()
 
+    def can_save(self, box):
         now = time.time()
 
         # GLOBAL PROTECTION (ANTI SPAM ABSOLUT)
@@ -200,7 +206,7 @@ class CameraWorker:
             return True
 
     def run(self):
-        while True:
+       while self.running:
             ret, frame = self.cap.read()
             if not ret:
                 time.sleep(1)
@@ -364,12 +370,21 @@ def camera_manager():
                         print("[CAMERA ADDED]", cid)
                         worker = CameraWorker(cid, cam["client_id"], cam["stream_url"])
                         active_cameras[cid] = worker
-                        Thread(target=worker.run, daemon=True).start()
+                        #Thread(target=worker.run, daemon=True).start()
+                        t = Thread(target=worker.run, daemon=True)
+                        worker.thread = t
+                        t.start()
 
                 # Hapus kamera yang tidak ada lagi
                 for cid in list(existing - incoming):
                     print("[CAMERA REMOVED]", cid)
-                    active_cameras.pop(cid, None)
+
+                    worker = active_cameras.pop(cid, None)
+                    if worker:
+                        worker.stop()
+                        if hasattr(worker, "thread"):
+                            worker.thread.join(timeout=2)
+
                     with preview_lock:
                         preview_frames.pop(cid, None)
 
