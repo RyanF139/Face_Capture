@@ -438,5 +438,3 @@ while True:
 
 if ENABLE_VIEW:
     cv2.destroyAllWindows()
-
-    # STOP ALL CAMERA WORKERS
