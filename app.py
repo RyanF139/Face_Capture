@@ -29,6 +29,7 @@ MAX_IMAGES = int(os.getenv("MAX_IMAGES", 150))
 ENABLE_RESIZE = os.getenv("ENABLE_RESIZE", "true").lower() == "true"
 RESIZE_WIDTH = int(os.getenv("RESIZE_WIDTH", 640))
 RESIZE_HEIGHT = int(os.getenv("RESIZE_HEIGHT", 360))
+MIN_SIZE_CAPTURE = int(os.getenv("MIN_SIZE_CAPTURE", 25))
 
 ENABLE_VIEW = os.getenv("ENABLE_VIEW", "true").lower() == "true"
 DISPLAY_WIDTH = int(os.getenv("DISPLAY_WIDTH", 400))
@@ -42,6 +43,8 @@ DEBUG_LOOP = os.getenv("DEBUG_LOOP", "true").lower() == "true"
 
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", 5))
+
+
 
 
 
@@ -336,7 +339,7 @@ class CameraWorker:
                         fh = int(fh * sy)
 
                         # skip face terlalu kecil (optional tapi bagus)
-                        if fw < 40 or fh < 40:
+                        if fw < MIN_SIZE_CAPTURE or fh < MIN_SIZE_CAPTURE:
                             continue
 
                         margin = 0.30
