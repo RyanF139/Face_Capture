@@ -41,6 +41,8 @@ CAMERA_REFRESH_INTERVAL = int(os.getenv("CAMERA_REFRESH_INTERVAL", 60))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBHOOK_TIMEOUT = int(os.getenv("WEBHOOK_TIMEOUT", 5))
 
+os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
+
 # ==============================
 # SAFE MODEL PATH
 # ==============================
@@ -111,7 +113,7 @@ def webhook_worker():
                     ("files", (frame_name, frame_bytes, "image/jpeg")),
                 ],
                 data=data_payload,
-                timeout=10   # naikkan jadi 10 detik
+                timeout=10
             )
 
             print(f"[WEBHOOK] Status: {response.status_code}")
@@ -125,7 +127,7 @@ def webhook_worker():
 
         queue.task_done()
 
-for _ in range(3):   # 3 worker paralel
+for _ in range(3):
     Thread(target=webhook_worker, daemon=True).start()
 
 # ==============================
@@ -156,11 +158,16 @@ class CameraWorker:
         self.face_memory_timeout = SAVE_INTERVAL
         self.last_global_save = 0
         self.running = True
+        self.frame_interval = 1 / 15
+        self.last_frame_time = 0
+        self.bad_frame_count = 0
+        self.max_bad_frames = 10
 
         print(f"[CAMERA START] {cctv_id}")
 
         self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        self.cap.set(cv2.CAP_PROP_FPS, 15)
 
         self.detector = cv2.FaceDetectorYN_create(
             MODEL_PATH, "", (320, 320),
@@ -178,7 +185,6 @@ class CameraWorker:
     def can_save(self, box):
         now = time.time()
 
-        # GLOBAL PROTECTION (ANTI SPAM ABSOLUT)
         if now - self.last_global_save < SAVE_INTERVAL:
             return False
 
@@ -190,9 +196,6 @@ class CameraWorker:
         bucket_y = cy // 150
 
         face_id = (bucket_x, bucket_y)
-
-        # jangan pakai size_bucket lagi (itu bikin spam)
-        # size fluktuatif bikin face dianggap baru
 
         if face_id in self.face_last_time:
             if now - self.face_last_time[face_id] >= SAVE_INTERVAL:
@@ -206,111 +209,145 @@ class CameraWorker:
             return True
 
     def run(self):
-       while self.running:
-            ret, frame = self.cap.read()
-            if not ret:
+        while self.running:
+
+            try:
+                # Flush buffer supaya ambil frame terbaru
+                for _ in range(2):
+                    self.cap.grab()
+
+                ret, frame = self.cap.retrieve()
+
+                if not ret or frame is None:
+                    self.bad_frame_count += 1
+                    print(f"[{self.cctv_id}] Bad frame ({self.bad_frame_count})")
+
+                    if self.bad_frame_count >= self.max_bad_frames:
+                        print(f"[{self.cctv_id}] Too many bad frames. FULL RECONNECT...")
+                        self.cap.release()
+                        time.sleep(1)
+
+                        self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                        self.cap.set(cv2.CAP_PROP_FPS, 15)
+
+                        self.bad_frame_count = 0
+
+                    continue
+
+                # Reset counter kalau frame normal
+                self.bad_frame_count = 0
+
+                # FPS limiter stabil 15 FPS
+                now = time.time()
+                if now - self.last_frame_time < self.frame_interval:
+                    continue
+                self.last_frame_time = now
+
+                original = frame
+                oh, ow = original.shape[:2]
+
+                if ENABLE_RESIZE:
+                    resized = cv2.resize(original, (RESIZE_WIDTH, RESIZE_HEIGHT))
+                    sx = ow / RESIZE_WIDTH
+                    sy = oh / RESIZE_HEIGHT
+                else:
+                    resized = original
+                    sx = sy = 1
+
+                h, w = resized.shape[:2]
+                self.detector.setInputSize((w, h))
+                _, faces = self.detector.detect(resized)
+
+                boxes = []
+                if faces is not None and len(faces) > 0:
+
+                    largest_face = max(faces, key=lambda f: f[2] * f[3])
+                    x, y, fw, fh = largest_face[:4].astype(int)
+
+                    x = int(x * sx)
+                    y = int(y * sy)
+                    fw = int(fw * sx)
+                    fh = int(fh * sy)
+
+                    margin = 0.30
+                    extra_top = 0.40
+
+                    pad_w = int(fw * margin)
+                    pad_h = int(fh * margin)
+                    extra_h = int(fh * extra_top)
+
+                    x_new = x - pad_w
+                    y_new = y - pad_h - extra_h
+                    fw_new = fw + (2 * pad_w)
+                    fh_new = fh + (2 * pad_h) + extra_h
+
+                    h_img, w_img = original.shape[:2]
+
+                    x_new = max(0, x_new)
+                    y_new = max(0, y_new)
+
+                    if x_new + fw_new > w_img:
+                        fw_new = w_img - x_new
+
+                    if y_new + fh_new > h_img:
+                        fh_new = h_img - y_new
+
+                    boxes.append((x_new, y_new, fw_new, fh_new))
+
+                frame_with_box = original.copy()
+                for (x,y,fw,fh) in boxes:
+                    cv2.rectangle(frame_with_box, (x,y), (x+fw,y+fh), (0,255,0), 2)
+
+                if ENABLE_VIEW:
+                    with preview_lock:
+                        preview_frames[self.cctv_id] = frame_with_box.copy()
+
+                for box in boxes:
+                    if self.can_save(box):
+                        x,y,fw,fh = box
+                        face_img = original[y:y+fh, x:x+fw]
+
+                        face_name = iso_name("face")
+                        frame_name = iso_name("frame")
+
+                        face_path = os.path.join(FACE_FOLDER, face_name)
+                        frame_path = os.path.join(FRAME_FOLDER, frame_name)
+
+                        ret1, face_buffer = cv2.imencode(".jpg", face_img)
+                        ret2, frame_buffer = cv2.imencode(".jpg", frame_with_box)
+
+                        if ret1 and ret2:
+
+                            with open(face_path, "wb") as f:
+                                f.write(face_buffer.tobytes())
+
+                            with open(frame_path, "wb") as f:
+                                f.write(frame_buffer.tobytes())
+
+                            enforce_limit(FACE_FOLDER)
+                            enforce_limit(FRAME_FOLDER)
+
+                            ts = face_name.replace(".jpg","").replace("face_","")
+
+                            if WEBHOOK_URL and not queue.full():
+                                print("QUEUE SIZE:", queue.qsize())
+                                queue.put((
+                                    face_buffer.tobytes(),
+                                    frame_buffer.tobytes(),
+                                    face_name,
+                                    frame_name,
+                                    ts,
+                                    box,
+                                    self.cctv_id,
+                                    self.client_id
+                                ))
+
+                            print(f"[{self.cctv_id}] Saved:", face_name)
+
+            except Exception as e:
+                print(f"[{self.cctv_id}] CRITICAL STREAM ERROR:", e)
                 time.sleep(1)
-                continue
-
-            original = frame
-            oh, ow = original.shape[:2]
-
-            if ENABLE_RESIZE:
-                resized = cv2.resize(original, (RESIZE_WIDTH, RESIZE_HEIGHT))
-                sx = ow / RESIZE_WIDTH
-                sy = oh / RESIZE_HEIGHT
-            else:
-                resized = original
-                sx = sy = 1
-
-            h, w = resized.shape[:2]
-            self.detector.setInputSize((w, h))
-            _, faces = self.detector.detect(resized)
-
-            boxes = []
-            if faces is not None and len(faces) > 0:
-
-                largest_face = max(faces, key=lambda f: f[2] * f[3])
-                x, y, fw, fh = largest_face[:4].astype(int)
-
-                x = int(x * sx)
-                y = int(y * sy)
-                fw = int(fw * sx)
-                fh = int(fh * sy)
-
-                margin = 0.30
-                extra_top = 0.40
-
-                pad_w = int(fw * margin)
-                pad_h = int(fh * margin)
-                extra_h = int(fh * extra_top)
-
-                x_new = x - pad_w
-                y_new = y - pad_h - extra_h
-                fw_new = fw + (2 * pad_w)
-                fh_new = fh + (2 * pad_h) + extra_h
-
-                h_img, w_img = original.shape[:2]
-
-                x_new = max(0, x_new)
-                y_new = max(0, y_new)
-
-                if x_new + fw_new > w_img:
-                    fw_new = w_img - x_new
-
-                if y_new + fh_new > h_img:
-                    fh_new = h_img - y_new
-
-                boxes.append((x_new, y_new, fw_new, fh_new))
-
-            frame_with_box = original.copy()
-            for (x,y,fw,fh) in boxes:
-                cv2.rectangle(frame_with_box, (x,y), (x+fw,y+fh), (0,255,0), 2)
-
-            if ENABLE_VIEW:
-                with preview_lock:
-                    preview_frames[self.cctv_id] = frame_with_box.copy()
-
-            for box in boxes:
-                if self.can_save(box):
-                    x,y,fw,fh = box
-                    face_img = original[y:y+fh, x:x+fw]
-
-                    face_name = iso_name("face")
-                    frame_name = iso_name("frame")
-
-                    face_path = os.path.join(FACE_FOLDER, face_name)
-                    frame_path = os.path.join(FRAME_FOLDER, frame_name)
-
-                    ret1, face_buffer = cv2.imencode(".jpg", face_img)
-                    ret2, frame_buffer = cv2.imencode(".jpg", frame_with_box)
-
-                    if ret1 and ret2:
-
-                        with open(face_path, "wb") as f:
-                            f.write(face_buffer.tobytes())
-
-                        with open(frame_path, "wb") as f:
-                            f.write(frame_buffer.tobytes())
-
-                        enforce_limit(FACE_FOLDER)
-                        enforce_limit(FRAME_FOLDER)
-
-                        ts = face_name.replace(".jpg","").replace("face_","")
-
-                        if WEBHOOK_URL and not queue.full():
-                            queue.put((
-                                face_buffer.tobytes(),
-                                frame_buffer.tobytes(),
-                                face_name,
-                                frame_name,
-                                ts,
-                                box,
-                                self.cctv_id,
-                                self.client_id
-                            ))
-
-                        print(f"[{self.cctv_id}] Saved:", face_name)
 
 # ==============================
 # FETCH CAMERA LIST
