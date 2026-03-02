@@ -97,9 +97,15 @@ def load_debug_sources(folder):
 
     sources = []
     for idx, path in enumerate(video_files):
-        sources.append({
-            "cctv_id": f"debug_{idx+1}",
-            "client_id": "debug",
+        # sources.append({
+        #     "cctv_id": f"debug_{idx+1}",
+        #     "client_id": "debug",
+        #     "stream_url": path   # ⚠ HARUS stream_url
+        # })
+
+         sources.append({
+            "cctv_id": "126a73ff-6d23-44a8-a496-194256bcf5db",
+            "client_id": "1102a7be-c4a5-42d6-ba0e-3905693e0722",
             "stream_url": path   # ⚠ HARUS stream_url
         })
 
@@ -116,14 +122,16 @@ def webhook_worker():
         if item is None:
             break
 
-        face_bytes, frame_bytes, face_name, frame_name, ts_iso, bbox, cctv_id, client_id = item
+        #face_bytes, frame_bytes, face_name, frame_name, ts_iso, bbox, cctv_id, client_id = item
+        face_bytes, frame_bytes, face_name, frame_name, ts_iso, bbox, cctv_id, client_id, is_debug = item
 
         try:
             data_payload = {
                 "timestamp": ts_iso,
                 "bbox": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
                 "channel_id": cctv_id,
-                "client_id": client_id
+                "client_id": client_id,
+                "is_debug": str(is_debug).lower()
             }
 
             log_payload = {
@@ -412,7 +420,8 @@ class CameraWorker:
                                     ts,
                                     box,
                                     self.cctv_id,
-                                    self.client_id
+                                    self.client_id,
+                                    DEBUG_MODE   # ⬅ tambahkan ini
                                 ))
 
                             print(f"[{self.cctv_id}] Saved:", face_name)
